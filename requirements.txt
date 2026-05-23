@@ -1,0 +1,11 @@
+requests
+pandas
+numpy
+scipy
+plotly
+dash
+dash-bootstrap-components
+python-dotenv
+pyarrow
+pytz
+gunicorn

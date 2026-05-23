@@ -1,0 +1,23 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+MASSIVE_API_KEY  = os.getenv("MASSIVE_API_KEY", "")
+ADMIN_USERNAME   = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD   = os.getenv("ADMIN_PASSWORD", "")
+MASSIVE_BASE_URL = "https://api.massive.com"
+
+TICKER = "QQQ"
+TIMESPAN = "minute"
+MULTIPLIER = 15
+CONTRACTS = 20
+RISK_FREE_RATE = 0.05
+VOL_WINDOW = 20  # bars for rolling historical volatility
+
+MARKET_OPEN = "09:30"
+MARKET_CLOSE = "16:00"
+FORCE_CLOSE = "15:55"
+
+TAKE_PROFIT = 300.0   # close trade when P&L reaches +$300  [optimizer #1 by Calmar]
+STOP_LOSS   = -150.0  # close trade when P&L reaches -$150  [optimizer #1 by Calmar]
