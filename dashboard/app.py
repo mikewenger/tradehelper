@@ -10,9 +10,12 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
                comparison: pd.DataFrame) -> dash.Dash:
     app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
 
-    unique_dates = sorted(set(df[df["in_market_hours"]].index.date))
-    date_options = [{"label": str(d), "value": str(d)} for d in unique_dates]
-    default_date = str(unique_dates[-1]) if unique_dates else None
+    market_bars = df[df["in_market_hours"]].index
+    date_options = [
+        {"label": ts.strftime("%Y-%m-%d %H:%M"), "value": ts.strftime("%Y-%m-%d %H:%M")}
+        for ts in market_bars
+    ]
+    default_date = market_bars[-1].strftime("%Y-%m-%d %H:%M") if len(market_bars) else None
 
     app.layout = dbc.Container([
         dbc.Row(dbc.Col(html.H2("QQQ EMA 8/21 Crossover — 0DTE Options Backtest",
@@ -93,9 +96,11 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
         Input("date-picker", "value"),
     )
     def update_daily(selected_date):
+        # selected_date is "YYYY-MM-DD HH:MM" — extract just the date part
+        selected_day = selected_date[:10] if selected_date else None
         day_trades = pd.DataFrame()
-        if not trade_log.empty and selected_date:
-            day_trades = trade_log[trade_log["date"].astype(str) == selected_date]
+        if not trade_log.empty and selected_day:
+            day_trades = trade_log[trade_log["date"].astype(str) == selected_day]
 
         total_trades = len(trade_log)
         wins = len(trade_log[trade_log["pnl"] > 0]) if not trade_log.empty else 0
@@ -117,7 +122,7 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
             _card("Worst Day", worst_day, color="danger"),
         ]
 
-        fig = _build_chart(df, day_trades, selected_date)
+        fig = _build_chart(df, day_trades, selected_day)
         table = _build_trade_table(day_trades)
         eq_fig = _build_equity(trade_log)
         return summary_cards, fig, table, eq_fig
