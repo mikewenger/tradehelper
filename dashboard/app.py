@@ -161,24 +161,31 @@ def _card(title, value, color="secondary"):
 
 def _build_chart(df: pd.DataFrame, day_trades: pd.DataFrame,
                  selected_date: str, selected_datetime: str = None) -> go.Figure:
+    import pytz
+    EST = pytz.timezone("US/Eastern")
+
     if not selected_date:
         return go.Figure()
+
     day_df = df[df.index.strftime("%Y-%m-%d") == selected_date]
     if day_df.empty:
         return go.Figure()
+
+    # Convert index to naive strings for Plotly (avoids tz serialisation issues)
+    x_vals = day_df.index.strftime("%Y-%m-%d %H:%M")
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                         row_heights=[0.75, 0.25], vertical_spacing=0.05)
 
     fig.add_trace(go.Candlestick(
-        x=day_df.index, open=day_df["open"], high=day_df["high"],
+        x=x_vals, open=day_df["open"], high=day_df["high"],
         low=day_df["low"], close=day_df["close"], name="QQQ",
         increasing_line_color="#26a69a", decreasing_line_color="#ef5350"
     ), row=1, col=1)
 
-    fig.add_trace(go.Scatter(x=day_df.index, y=day_df["ema8"], name="EMA 8",
+    fig.add_trace(go.Scatter(x=x_vals, y=day_df["ema8"], name="EMA 8",
                               line=dict(color="#ff9800", width=1.5)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=day_df.index, y=day_df["ema21"], name="EMA 21",
+    fig.add_trace(go.Scatter(x=x_vals, y=day_df["ema21"], name="EMA 21",
                               line=dict(color="#42a5f5", width=1.5)), row=1, col=1)
 
     exit_colors = {"TP": "#00e676", "SL": "#ff1744", "Cross": "#ffffff",
@@ -190,67 +197,61 @@ def _build_chart(df: pd.DataFrame, day_trades: pd.DataFrame,
             symbol_entry = "triangle-up" if trade["direction"] == "CALL" else "triangle-down"
             exit_color = exit_colors.get(trade.get("exit_reason", "Cross"), "#ffffff")
             pnl_str = f"${trade['pnl']:,.2f}" if isinstance(trade["pnl"], (int, float)) else trade["pnl"]
+            entry_x = trade["entry_time"].strftime("%Y-%m-%d %H:%M")
+            exit_x  = trade["exit_time"].strftime("%Y-%m-%d %H:%M")
 
             fig.add_trace(go.Scatter(
-                x=[trade["entry_time"]], y=[trade["entry_underlying"]],
+                x=[entry_x], y=[trade["entry_underlying"]],
                 mode="markers",
                 marker=dict(symbol=symbol_entry, size=14, color=color,
                             line=dict(color="#ffffff", width=1)),
                 hovertemplate=(f"{trade['direction']} Entry<br>"
-                               f"@{trade['entry_time'].strftime('%H:%M')}<br>"
+                               f"@{entry_x}<br>"
                                f"Strike: {trade['strike']}<br>"
                                f"Premium: ${trade['entry_price']:.4f}<extra></extra>"),
                 showlegend=False,
             ), row=1, col=1)
             fig.add_trace(go.Scatter(
-                x=[trade["exit_time"]], y=[trade["exit_underlying"]],
+                x=[exit_x], y=[trade["exit_underlying"]],
                 mode="markers",
                 marker=dict(symbol="x-thin", size=14, color=exit_color,
                             line=dict(color=exit_color, width=2)),
                 hovertemplate=(f"Exit ({trade.get('exit_reason', '')}) {pnl_str}<br>"
-                               f"@{trade['exit_time'].strftime('%H:%M')}<extra></extra>"),
+                               f"@{exit_x}<extra></extra>"),
                 showlegend=False,
             ), row=1, col=1)
 
-    colors = ["#26a69a" if c >= o else "#ef5350"
-              for c, o in zip(day_df["close"], day_df["open"])]
-    fig.add_trace(go.Bar(x=day_df.index, y=day_df["volume"], name="Volume",
-                          marker_color=colors, opacity=0.6), row=2, col=1)
+    bar_colors = ["#26a69a" if c >= o else "#ef5350"
+                  for c, o in zip(day_df["close"], day_df["open"])]
+    fig.add_trace(go.Bar(x=x_vals, y=day_df["volume"], name="Volume",
+                          marker_color=bar_colors, opacity=0.6), row=2, col=1)
 
-    # Vertical marker + zoom window for the selected bar
-    import pytz
-    from datetime import timedelta
-    EST = pytz.timezone("US/Eastern")
+    # Selected bar: yellow marker line + zoom to ±1 hr window
+    sel_str = selected_datetime  # already "YYYY-MM-DD HH:MM"
+    x_range = [x_vals[0], x_vals[-1]]  # default: full day
 
-    x_range = None
-    if selected_datetime:
-        try:
-            sel_ts = pd.Timestamp(selected_datetime).tz_localize(EST)
-            window = timedelta(hours=1)
-            x_start = max(sel_ts - window, day_df.index[0])
-            x_end   = min(sel_ts + window, day_df.index[-1])
-            x_range = [x_start, x_end]
+    if sel_str and sel_str in x_vals:
+        idx = list(x_vals).index(sel_str)
+        lo = max(0, idx - 4)          # 4 bars = 1 hour back
+        hi = min(len(x_vals) - 1, idx + 4)
+        x_range = [x_vals[lo], x_vals[hi]]
 
-            # Yellow dashed vertical line at the selected bar
-            fig.add_vline(
-                x=sel_ts.value / 1e6,   # milliseconds for plotly
-                line_dash="dash",
-                line_color="#ffd600",
-                line_width=1.5,
-                row=1, col=1,
-            )
-        except Exception:
-            pass
+        # Vertical dashed line using add_shape (works in all Plotly versions)
+        fig.add_shape(type="line",
+                      x0=sel_str, x1=sel_str,
+                      y0=0, y1=1, xref="x", yref="paper",
+                      line=dict(color="#ffd600", width=2, dash="dash"))
 
     fig.update_layout(
+        title=dict(text=f"QQQ  ·  {selected_datetime or selected_date}",
+                   font=dict(size=13, color="#aaa")),
         template="plotly_dark",
         xaxis_rangeslider_visible=False,
-        margin=dict(l=40, r=20, t=30, b=20),
-        legend=dict(orientation="h", y=1.05),
-        xaxis=dict(range=x_range) if x_range else {},
+        margin=dict(l=40, r=20, t=45, b=20),
+        legend=dict(orientation="h", y=1.08),
+        xaxis=dict(range=x_range, tickformat="%H:%M", tickangle=-45),
+        xaxis2=dict(range=x_range, tickformat="%H:%M", tickangle=-45),
     )
-    fig.update_xaxes(tickformat="%H:%M", tickangle=-45, row=1, col=1)
-    fig.update_xaxes(tickformat="%H:%M", tickangle=-45, row=2, col=1)
     return fig
 
 
