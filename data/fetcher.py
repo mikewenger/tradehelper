@@ -56,7 +56,16 @@ def fetch_qqq_bars() -> pd.DataFrame:
     df = df.set_index("datetime").sort_index()
     df = df[["open", "high", "low", "close", "volume", "vwap"]]
 
+    # ── Keep ONLY regular session bars (9:30–16:00 EST, weekdays) ─────────────
+    # The API returns extended-hours bars (4:00 AM – 7:45 PM).
+    # EMAs must be calculated on the same bars a trader sees on a 15-min chart.
+    market_open  = pd.Timestamp("09:30").time()
+    market_close = pd.Timestamp("16:00").time()
+    is_weekday   = df.index.dayofweek < 5
+    in_session   = (df.index.time >= market_open) & (df.index.time < market_close)
+    df = df[is_weekday & in_session]
+
     CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(CACHE_FILE)
-    print(f"Fetched {len(df)} bars. Cached to {CACHE_FILE}")
+    print(f"Fetched {len(df)} regular-session bars (9:30–16:00 EST). Cached to {CACHE_FILE}")
     return df
