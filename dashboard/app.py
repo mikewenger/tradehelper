@@ -215,6 +215,9 @@ def _build_chart(df: pd.DataFrame, day_trades: pd.DataFrame,
     fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False,
                       margin=dict(l=40, r=20, t=30, b=20),
                       legend=dict(orientation="h", y=1.05))
+    # Force x-axis to show time (HH:MM) not just the date
+    fig.update_xaxes(tickformat="%H:%M", tickangle=-45, row=1, col=1)
+    fig.update_xaxes(tickformat="%H:%M", tickangle=-45, row=2, col=1)
     return fig
 
 
