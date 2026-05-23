@@ -226,8 +226,8 @@ def _build_trade_table(day_trades: pd.DataFrame) -> html.Div:
             "exit_time", "exit_price", "exit_reason", "contracts", "pnl"]
     cols = [c for c in cols if c in day_trades.columns]
     display = day_trades[cols].copy()
-    display["entry_time"] = display["entry_time"].dt.strftime("%H:%M")
-    display["exit_time"] = display["exit_time"].dt.strftime("%H:%M")
+    display["entry_time"] = display["entry_time"].dt.strftime("%Y-%m-%d %H:%M")
+    display["exit_time"] = display["exit_time"].dt.strftime("%Y-%m-%d %H:%M")
     display["pnl"] = display["pnl"].apply(lambda x: f"${x:,.2f}")
 
     return dash_table.DataTable(
