@@ -10,7 +10,7 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
                comparison: pd.DataFrame) -> dash.Dash:
     app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
 
-    unique_dates = sorted(df[df["in_market_hours"]].index.date)
+    unique_dates = sorted(set(df[df["in_market_hours"]].index.date))
     date_options = [{"label": str(d), "value": str(d)} for d in unique_dates]
     default_date = str(unique_dates[-1]) if unique_dates else None
 
