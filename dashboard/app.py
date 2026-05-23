@@ -122,7 +122,7 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
             _card("Worst Day", worst_day, color="danger"),
         ]
 
-        fig = _build_chart(df, day_trades, selected_day)
+        fig = _build_chart(df, day_trades, selected_day, selected_date)
         table = _build_trade_table(day_trades)
         eq_fig = _build_equity(trade_log)
         return summary_cards, fig, table, eq_fig
@@ -160,7 +160,7 @@ def _card(title, value, color="secondary"):
 
 
 def _build_chart(df: pd.DataFrame, day_trades: pd.DataFrame,
-                 selected_date: str) -> go.Figure:
+                 selected_date: str, selected_datetime: str = None) -> go.Figure:
     if not selected_date:
         return go.Figure()
     day_df = df[df.index.strftime("%Y-%m-%d") == selected_date]
@@ -217,10 +217,38 @@ def _build_chart(df: pd.DataFrame, day_trades: pd.DataFrame,
     fig.add_trace(go.Bar(x=day_df.index, y=day_df["volume"], name="Volume",
                           marker_color=colors, opacity=0.6), row=2, col=1)
 
-    fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False,
-                      margin=dict(l=40, r=20, t=30, b=20),
-                      legend=dict(orientation="h", y=1.05))
-    # Force x-axis to show time (HH:MM) not just the date
+    # Vertical marker + zoom window for the selected bar
+    import pytz
+    from datetime import timedelta
+    EST = pytz.timezone("US/Eastern")
+
+    x_range = None
+    if selected_datetime:
+        try:
+            sel_ts = pd.Timestamp(selected_datetime).tz_localize(EST)
+            window = timedelta(hours=1)
+            x_start = max(sel_ts - window, day_df.index[0])
+            x_end   = min(sel_ts + window, day_df.index[-1])
+            x_range = [x_start, x_end]
+
+            # Yellow dashed vertical line at the selected bar
+            fig.add_vline(
+                x=sel_ts.value / 1e6,   # milliseconds for plotly
+                line_dash="dash",
+                line_color="#ffd600",
+                line_width=1.5,
+                row=1, col=1,
+            )
+        except Exception:
+            pass
+
+    fig.update_layout(
+        template="plotly_dark",
+        xaxis_rangeslider_visible=False,
+        margin=dict(l=40, r=20, t=30, b=20),
+        legend=dict(orientation="h", y=1.05),
+        xaxis=dict(range=x_range) if x_range else {},
+    )
     fig.update_xaxes(tickformat="%H:%M", tickangle=-45, row=1, col=1)
     fig.update_xaxes(tickformat="%H:%M", tickangle=-45, row=2, col=1)
     return fig
