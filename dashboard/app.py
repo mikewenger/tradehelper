@@ -4,13 +4,19 @@ from plotly.subplots import make_subplots
 import dash
 from dash import dcc, html, dash_table, Input, Output
 import dash_bootstrap_components as dbc
+from config import TAKE_PROFIT, STOP_LOSS, MARKET_OPEN, MARKET_CLOSE, FORCE_CLOSE
 
 
 def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
-               comparison: pd.DataFrame) -> dash.Dash:
+               comparison: pd.DataFrame,
+               tf_data: dict | None = None) -> dash.Dash:
     app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
 
     market_bars = df[df["in_market_hours"]].index
+    date_range_str = (
+        f"{market_bars.min().strftime('%b %d, %Y')} "
+        f"– {market_bars.max().strftime('%b %d, %Y')}"
+    )
     date_options = [
         {"label": ts.strftime("%Y-%m-%d %H:%M"), "value": ts.strftime("%Y-%m-%d %H:%M")}
         for ts in market_bars
@@ -51,19 +57,77 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
 
             # ── TAB 2: Contract comparison ─────────────────────────────────────
             dbc.Tab(label="Contract Comparison", tab_id="tab-contracts", children=[
+
+                # ── Strategy criteria panel ────────────────────────────────────
                 dbc.Row(dbc.Col(html.H4(
-                    "0DTE | 1 Strike OTM | Calls & Puts — by Contract Size",
+                    "Strategy Criteria & Contract Comparison",
                     className="text-center mt-4 mb-3"
                 ))),
-                dbc.Row(dbc.Col(html.P(
-                    "Results using the same EMA 8/21 crossover strategy and "
-                    "TP/SL settings, varying only the number of contracts.",
-                    className="text-center text-muted mb-4"
-                ))),
+
+                dbc.Row([
+                    dbc.Col(dbc.Card(dbc.CardBody([
+                        html.H6("INSTRUMENT", className="text-muted mb-2 small"),
+                        html.P("QQQ  •  0DTE Options  •  1 Strike OTM",
+                               className="fw-bold mb-0"),
+                    ]), color="dark", outline=True), width=12, lg=4, className="mb-3"),
+
+                    dbc.Col(dbc.Card(dbc.CardBody([
+                        html.H6("ENTRY SIGNAL", className="text-muted mb-2 small"),
+                        html.P([
+                            html.Span("BUY CALL", className="text-success fw-bold"),
+                            " — EMA 8 crosses above EMA 21",
+                            html.Br(),
+                            html.Span("BUY PUT", className="text-danger fw-bold"),
+                            " — EMA 8 crosses below EMA 21",
+                        ], className="mb-0 small"),
+                    ]), color="dark", outline=True), width=12, lg=4, className="mb-3"),
+
+                    dbc.Col(dbc.Card(dbc.CardBody([
+                        html.H6("TIMEFRAME", className="text-muted mb-2 small"),
+                        html.P([
+                            "15-minute bars", html.Br(),
+                            f"Market hours: {MARKET_OPEN} – {MARKET_CLOSE} EST", html.Br(),
+                            f"Force-close: {FORCE_CLOSE} EST",
+                        ], className="mb-0 small"),
+                    ]), color="dark", outline=True), width=12, lg=4, className="mb-3"),
+                ], className="mb-2"),
+
+                dbc.Row([
+                    dbc.Col(dbc.Card(dbc.CardBody([
+                        html.H6("PROFIT TARGET", className="text-muted mb-2 small"),
+                        html.P(f"+${TAKE_PROFIT:,.0f} per trade",
+                               className="fw-bold text-success mb-0 fs-5"),
+                    ]), color="success", outline=True), width=12, lg=4, className="mb-3"),
+
+                    dbc.Col(dbc.Card(dbc.CardBody([
+                        html.H6("STOP LOSS", className="text-muted mb-2 small"),
+                        html.P(f"-${abs(STOP_LOSS):,.0f} per trade",
+                               className="fw-bold text-danger mb-0 fs-5"),
+                    ]), color="danger", outline=True), width=12, lg=4, className="mb-3"),
+
+                    dbc.Col(dbc.Card(dbc.CardBody([
+                        html.H6("MOVING AVERAGES", className="text-muted mb-2 small"),
+                        html.P([
+                            "Fast: EMA 8 (close, exponential)", html.Br(),
+                            "Slow: EMA 21 (close, exponential)", html.Br(),
+                            "Computed on all hours (matches TOS)",
+                        ], className="mb-0 small"),
+                    ]), color="dark", outline=True), width=12, lg=4, className="mb-3"),
+                ], className="mb-2"),
+
+                dbc.Row([
+                    dbc.Col(dbc.Card(dbc.CardBody([
+                        html.H6("BACKTEST DATE RANGE", className="text-muted mb-2 small"),
+                        html.P(date_range_str,
+                               className="fw-bold mb-0 fs-5"),
+                    ]), color="secondary", outline=True), width=12, className="mb-3"),
+                ], className="mb-2"),
+
+                html.Hr(style={"borderColor": "#444"}),
 
                 # Calls table
                 dbc.Row(dbc.Col([
-                    html.H5("CALLS", className="text-success mb-2"),
+                    html.H5("CALLS", className="text-success mb-2 mt-3"),
                     html.Div(id="calls-table"),
                 ], width=12), className="mb-4"),
 
@@ -83,6 +147,13 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
                 dbc.Row(dbc.Col(dcc.Graph(id="contract-chart",
                                           style={"height": "350px"}))),
             ]),
+            # ── TAB 3: Timeframe Analysis ──────────────────────────────────────
+            dbc.Tab(label="Timeframe Analysis", tab_id="tab-tf", children=(
+                _build_tf_tab(tf_data) if tf_data else [
+                    html.P("Timeframe comparison data not available.",
+                           className="text-muted m-4")]
+            )),
+
         ], id="tabs", active_tab="tab-daily"),
 
     ], fluid=True)
@@ -260,12 +331,12 @@ def _build_trade_table(day_trades: pd.DataFrame) -> html.Div:
         return html.P("No trades on this day.", className="text-muted")
 
     cols = ["direction", "strike", "entry_time", "entry_price",
-            "exit_time", "exit_price", "exit_reason", "contracts", "pnl"]
+            "exit_time", "exit_price", "exit_reason", "contracts", "pnl", "pricing"]
     cols = [c for c in cols if c in day_trades.columns]
     display = day_trades[cols].copy()
     display["entry_time"] = display["entry_time"].dt.strftime("%Y-%m-%d %H:%M")
-    display["exit_time"] = display["exit_time"].dt.strftime("%Y-%m-%d %H:%M")
-    display["pnl"] = display["pnl"].apply(lambda x: f"${x:,.2f}")
+    display["exit_time"]  = display["exit_time"].dt.strftime("%Y-%m-%d %H:%M")
+    display["pnl"]        = display["pnl"].apply(lambda x: f"${x:,.2f}")
 
     return dash_table.DataTable(
         data=display.to_dict("records"),
@@ -274,9 +345,12 @@ def _build_trade_table(day_trades: pd.DataFrame) -> html.Div:
         style_header={"backgroundColor": "#303030", "color": "white", "fontWeight": "bold"},
         style_cell={"backgroundColor": "#1a1a1a", "color": "white", "textAlign": "center"},
         style_data_conditional=[
+            # P&L colors
             {"if": {"filter_query": '{pnl} contains "-"'}, "color": "#ef5350"},
-            {"if": {"filter_query": '{pnl} contains "$" && !({pnl} contains "-")',
-                    }, "color": "#26a69a"},
+            {"if": {"filter_query": '{pnl} contains "$" && !({pnl} contains "-")'}, "color": "#26a69a"},
+            # Pricing source: BS rows get an amber background, Mixed gets orange
+            {"if": {"filter_query": '{pricing} = "BS"'},    "backgroundColor": "#3a2800", "color": "#ffb74d"},
+            {"if": {"filter_query": '{pricing} = "Mixed"'}, "backgroundColor": "#3a1e00", "color": "#ff9800"},
         ],
     )
 
@@ -302,34 +376,43 @@ def _build_comparison_table(subset: pd.DataFrame, pnl_color: str) -> html.Div:
     if subset.empty:
         return html.P("No data.", className="text-muted")
 
-    display = subset[["contracts", "trades", "win_rate",
-                       "total_pnl", "avg_pnl", "best_trade", "worst_trade"]].copy()
+    cols_needed = ["contracts", "trades", "win_rate",
+                   "tp_hits", "sl_hits", "cross_exits", "force_exits",
+                   "total_pnl", "avg_pnl", "best_trade", "worst_trade"]
+    cols_needed = [c for c in cols_needed if c in subset.columns]
+    display = subset[cols_needed].copy()
 
-    display["win_rate"] = display["win_rate"].apply(lambda x: f"{x:.1f}%")
-    display["total_pnl"] = display["total_pnl"].apply(lambda x: f"${x:,.2f}")
-    display["avg_pnl"] = display["avg_pnl"].apply(lambda x: f"${x:,.2f}")
-    display["best_trade"] = display["best_trade"].apply(lambda x: f"${x:,.2f}")
+    # Format percentages and currency
+    display["win_rate"]    = display["win_rate"].apply(lambda x: f"{x:.1f}%")
+    display["total_pnl"]   = display["total_pnl"].apply(lambda x: f"${x:,.2f}")
+    display["avg_pnl"]     = display["avg_pnl"].apply(lambda x: f"${x:,.2f}")
+    display["best_trade"]  = display["best_trade"].apply(lambda x: f"${x:,.2f}")
     display["worst_trade"] = display["worst_trade"].apply(lambda x: f"${x:,.2f}")
 
     col_names = {
-        "contracts": "Contracts",
-        "trades": "Trades",
-        "win_rate": "Win Rate",
-        "total_pnl": "Total P&L",
-        "avg_pnl": "Avg P&L / Trade",
-        "best_trade": "Best Trade",
+        "contracts":   "Contracts",
+        "trades":      "Total Trades",
+        "win_rate":    "Win Rate",
+        "tp_hits":     f"Take Profit Hits (+${TAKE_PROFIT:,.0f})",
+        "sl_hits":     f"Stop Loss Hits (-${abs(STOP_LOSS):,.0f})",
+        "cross_exits": "Cross Exits",
+        "force_exits": "Force / EOD",
+        "total_pnl":   "Total P&L",
+        "avg_pnl":     "Avg P&L / Trade",
+        "best_trade":  "Best Trade",
         "worst_trade": "Worst Trade",
     }
 
     return dash_table.DataTable(
         data=display.to_dict("records"),
-        columns=[{"name": col_names[c], "id": c} for c in display.columns],
+        columns=[{"name": col_names.get(c, c), "id": c} for c in display.columns],
         style_table={"overflowX": "auto"},
         style_header={"backgroundColor": "#303030", "color": "white",
-                      "fontWeight": "bold", "textAlign": "center"},
+                      "fontWeight": "bold", "textAlign": "center",
+                      "whiteSpace": "normal", "height": "auto"},
         style_cell={"backgroundColor": "#1a1a1a", "color": "white",
                     "textAlign": "center", "padding": "10px",
-                    "fontSize": "14px"},
+                    "fontSize": "14px", "minWidth": "90px"},
         style_data_conditional=[
             {"if": {"filter_query": '{total_pnl} contains "-"',
                     "column_id": "total_pnl"}, "color": "#ef5350"},
@@ -339,12 +422,273 @@ def _build_comparison_table(subset: pd.DataFrame, pnl_color: str) -> html.Div:
                     "column_id": "avg_pnl"}, "color": "#ef5350"},
             {"if": {"filter_query": '{avg_pnl} contains "$" && !({avg_pnl} contains "-")',
                     "column_id": "avg_pnl"}, "color": "#26a69a"},
-            {"if": {"column_id": "best_trade"}, "color": "#26a69a"},
+            {"if": {"column_id": "best_trade"},  "color": "#26a69a"},
             {"if": {"column_id": "worst_trade"}, "color": "#ef5350"},
-            {"if": {"column_id": "contracts"}, "fontWeight": "bold",
+            {"if": {"column_id": "tp_hits"},     "color": "#26a69a"},
+            {"if": {"column_id": "sl_hits"},     "color": "#ef5350"},
+            {"if": {"column_id": "contracts"},   "fontWeight": "bold",
              "color": pnl_color},
         ],
     )
+
+
+def _build_tf_tab(tf_data: dict) -> list:
+    """Build the full Timeframe Analysis tab layout."""
+    COLORS = {5: "#ef5350", 15: "#26a69a", 30: "#42a5f5"}
+    WINNER = 15
+
+    # ── Winner callout ────────────────────────────────────────────────────────
+    w = tf_data.get(WINNER, {})
+    winner_card = dbc.Alert([
+        html.H4("🏆  15-Minute Bars is the Optimal Timeframe", className="alert-heading mb-2"),
+        html.P([
+            f"Calmar Ratio {w.get('calmar', '—')}  •  "
+            f"{w.get('trades', '—')} trades  •  "
+            f"{w.get('win_rate', '—')}% win rate  •  "
+            f"Total P&L ${w.get('total_pnl', 0):,.2f}  •  "
+            f"Max Drawdown ${abs(w.get('max_dd', 0)):,.2f}",
+        ], className="mb-0 small"),
+    ], color="success", className="mt-4 mb-4")
+
+    # ── Top metric cards (one per timeframe) ──────────────────────────────────
+    metric_cards = dbc.Row([
+        dbc.Col(_tf_summary_card(tf, tf_data[tf], COLORS[tf], tf == WINNER), lg=4, className="mb-3")
+        for tf in [5, 15, 30] if tf in tf_data
+    ], className="mb-2")
+
+    # ── Comparison table ──────────────────────────────────────────────────────
+    comp_table = _build_tf_comparison_table(tf_data, COLORS, WINNER)
+
+    # ── Equity curves ─────────────────────────────────────────────────────────
+    equity_fig = _build_tf_equity_chart(tf_data, COLORS)
+
+    # ── Bar charts row ────────────────────────────────────────────────────────
+    bar_figs = _build_tf_bar_charts(tf_data, COLORS)
+
+    # ── Exit breakdown ────────────────────────────────────────────────────────
+    exit_fig = _build_tf_exit_chart(tf_data, COLORS)
+
+    return [
+        dbc.Row(dbc.Col(html.H4("Timeframe Analysis — EMA 8/21 Crossover",
+                                 className="text-center mt-4 mb-0"))),
+        dbc.Row(dbc.Col(html.P(
+            f"TP: +${TAKE_PROFIT:,.0f}  |  SL: -${abs(STOP_LOSS):,.0f}  |  "
+            "Black-Scholes pricing (equal basis for all timeframes)",
+            className="text-center text-muted small mb-0"
+        ))),
+        dbc.Row(dbc.Col(winner_card)),
+        metric_cards,
+        dbc.Row(dbc.Col(html.H5("Performance Metrics Comparison", className="mt-2 mb-2"))),
+        dbc.Row(dbc.Col(comp_table, className="mb-4")),
+        dbc.Row(dbc.Col([
+            html.H5("Equity Curves (Cumulative P&L)", className="mt-2 mb-1"),
+            html.P("All three timeframes, same date range, same TP/SL rules.",
+                   className="text-muted small mb-2"),
+            dcc.Graph(figure=equity_fig, style={"height": "380px"}),
+        ])),
+        dbc.Row([
+            dbc.Col(dcc.Graph(figure=bar_figs["calmar"], style={"height": "300px"}), lg=4),
+            dbc.Col(dcc.Graph(figure=bar_figs["win_rate"], style={"height": "300px"}), lg=4),
+            dbc.Col(dcc.Graph(figure=bar_figs["avg_pnl"], style={"height": "300px"}), lg=4),
+        ], className="mt-2"),
+        dbc.Row(dbc.Col([
+            html.H5("Exit Reason Breakdown", className="mt-2 mb-1"),
+            dcc.Graph(figure=exit_fig, style={"height": "300px"}),
+        ])),
+        dbc.Row(dbc.Col(_tf_why_box(), className="mt-3 mb-4")),
+    ]
+
+
+def _tf_summary_card(tf: int, stats: dict, color: str, is_winner: bool) -> dbc.Card:
+    border = "success" if is_winner else "secondary"
+    badge = dbc.Badge("⭐ WINNER", color="success", className="ms-2") if is_winner else ""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.H5([f"{tf}-Minute Bars", badge], className="mb-0 d-flex align-items-center")
+        ], style={"borderLeft": f"4px solid {color}"}),
+        dbc.CardBody([
+            dbc.Row([
+                dbc.Col([html.P("Calmar Ratio", className="text-muted small mb-1"),
+                         html.H4(f"{stats['calmar']:.3f}", className="fw-bold",
+                                 style={"color": color})]),
+                dbc.Col([html.P("Total P&L", className="text-muted small mb-1"),
+                         html.H5(f"${stats['total_pnl']:,.0f}",
+                                 className="text-success fw-bold")]),
+            ]),
+            dbc.Row([
+                dbc.Col([html.P("Win Rate", className="text-muted small mb-1"),
+                         html.H5(f"{stats['win_rate']}%", className="fw-bold")]),
+                dbc.Col([html.P("Trades", className="text-muted small mb-1"),
+                         html.H5(str(stats['trades']), className="fw-bold")]),
+                dbc.Col([html.P("Max DD", className="text-muted small mb-1"),
+                         html.H5(f"${abs(stats['max_dd']):,.0f}",
+                                 className="text-danger fw-bold")]),
+            ]),
+        ]),
+    ], color=border, outline=True)
+
+
+def _build_tf_comparison_table(tf_data: dict, colors: dict, winner: int) -> html.Div:
+    metrics = [
+        ("Trades",           "trades",       lambda v: str(v)),
+        ("Win Rate",         "win_rate",     lambda v: f"{v}%"),
+        ("Total P&L",        "total_pnl",    lambda v: f"${v:,.2f}"),
+        ("Avg P&L / Trade",  "avg_pnl",      lambda v: f"${v:,.2f}"),
+        ("Max Drawdown",     "max_dd",       lambda v: f"${abs(v):,.2f}"),
+        ("Calmar Ratio",     "calmar",       lambda v: f"{v:.3f}"),
+        ("TP Hits",          "tp_hits",      lambda v: str(v)),
+        ("SL Hits",          "sl_hits",      lambda v: str(v)),
+        ("Cross Exits",      "cross_exits",  lambda v: str(v)),
+        ("Force / EOD",      "force_exits",  lambda v: str(v)),
+    ]
+    tfs = [tf for tf in [5, 15, 30] if tf in tf_data]
+
+    header = html.Thead(html.Tr([
+        html.Th("Metric", style={"width": "200px"}),
+        *[html.Th(
+            [f"{tf}-Min", dbc.Badge("★ BEST", color="success", className="ms-1") if tf == winner else ""],
+            style={"textAlign": "center",
+                   "backgroundColor": "#1a3a1a" if tf == winner else "#1a1a1a",
+                   "color": colors[tf], "fontWeight": "bold"},
+        ) for tf in tfs],
+    ]))
+
+    rows = []
+    for label, key, fmt in metrics:
+        tds = [html.Td(label, style={"fontWeight": "bold", "color": "#aaa"})]
+        for tf in tfs:
+            val = tf_data[tf].get(key, "—")
+            text = fmt(val) if val != "—" else "—"
+            # Highlight winner column and color-code specific metrics
+            bg = "#1a3a1a" if tf == winner else "#1a1a1a"
+            color = "#ddd"
+            if key == "calmar":
+                color = colors[tf]
+            elif key in ("total_pnl", "avg_pnl") and isinstance(val, (int, float)):
+                color = "#26a69a" if val >= 0 else "#ef5350"
+            elif key == "max_dd":
+                color = "#ef5350"
+            elif key == "tp_hits":
+                color = "#26a69a"
+            elif key == "sl_hits":
+                color = "#ef5350"
+            elif key == "win_rate":
+                color = "#ffb74d"
+            tds.append(html.Td(text, style={
+                "textAlign": "center", "color": color,
+                "backgroundColor": bg, "fontWeight": "bold" if tf == winner else "normal",
+            }))
+        rows.append(html.Tr(tds))
+
+    table = dbc.Table(
+        [header, html.Tbody(rows)],
+        bordered=True, hover=True, size="sm",
+        style={"fontSize": "14px"},
+    )
+    return html.Div(table, style={"overflowX": "auto"})
+
+
+def _build_tf_equity_chart(tf_data: dict, colors: dict) -> go.Figure:
+    fig = go.Figure()
+    for tf in [5, 15, 30]:
+        if tf not in tf_data:
+            continue
+        log = tf_data[tf]["log"]
+        if log.empty:
+            continue
+        fig.add_trace(go.Scatter(
+            x=log["exit_time"],
+            y=log["cumulative_pnl"],
+            mode="lines",
+            name=f"{tf}-min",
+            line=dict(color=colors[tf], width=3 if tf == 15 else 1.5),
+        ))
+    fig.add_hline(y=0, line_color="gray", line_dash="dash", line_width=1)
+    fig.update_layout(
+        template="plotly_dark",
+        margin=dict(l=50, r=20, t=20, b=30),
+        yaxis_tickprefix="$", yaxis_tickformat=",.0f",
+        legend=dict(orientation="h", y=1.05),
+        hovermode="x unified",
+    )
+    return fig
+
+
+def _build_tf_bar_charts(tf_data: dict, colors: dict) -> dict:
+    tfs  = [tf for tf in [5, 15, 30] if tf in tf_data]
+    lbls = [f"{tf}-min" for tf in tfs]
+    clrs = [colors[tf] for tf in tfs]
+
+    def _bar(values, title, prefix="", suffix=""):
+        fig = go.Figure(go.Bar(
+            x=lbls, y=values, marker_color=clrs,
+            text=[f"{prefix}{v}{suffix}" for v in values],
+            textposition="outside",
+        ))
+        fig.update_layout(
+            template="plotly_dark", title=title,
+            margin=dict(l=30, r=10, t=45, b=30),
+            yaxis=dict(tickprefix=prefix),
+            showlegend=False,
+        )
+        return fig
+
+    return {
+        "calmar":   _bar([tf_data[tf]["calmar"]   for tf in tfs], "Calmar Ratio (higher = better)"),
+        "win_rate": _bar([tf_data[tf]["win_rate"] for tf in tfs], "Win Rate (%)", suffix="%"),
+        "avg_pnl":  _bar([tf_data[tf]["avg_pnl"]  for tf in tfs], "Avg P&L / Trade", prefix="$"),
+    }
+
+
+def _build_tf_exit_chart(tf_data: dict, colors: dict) -> go.Figure:
+    tfs  = [tf for tf in [5, 15, 30] if tf in tf_data]
+    lbls = [f"{tf}-min" for tf in tfs]
+    fig  = go.Figure()
+    for reason, color in [("tp_hits", "#26a69a"), ("sl_hits", "#ef5350"),
+                           ("cross_exits", "#ffb74d"), ("force_exits", "#9e9e9e")]:
+        name = {"tp_hits": "TP Hit", "sl_hits": "SL Hit",
+                "cross_exits": "Cross Exit", "force_exits": "Force/EOD"}[reason]
+        fig.add_trace(go.Bar(
+            name=name, x=lbls,
+            y=[tf_data[tf][reason] for tf in tfs],
+            marker_color=color,
+        ))
+    fig.update_layout(
+        template="plotly_dark", barmode="group",
+        margin=dict(l=30, r=10, t=20, b=30),
+        legend=dict(orientation="h", y=1.08),
+    )
+    return fig
+
+
+def _tf_why_box() -> dbc.Card:
+    return dbc.Card(dbc.CardBody([
+        html.H5("Why 15-Minute Bars?", className="text-success mb-3"),
+        dbc.Row([
+            dbc.Col([
+                html.P([html.Strong("vs 5-min: "), "Fewer false signals. "
+                    "5-min generates 3× more trades but at 33.6% win rate vs 46% — most are noise. "
+                    "Avg P&L per trade is only $117 (5-min) vs $820 (15-min). "
+                    "The higher trade count burns more in bid/ask spread and commissions."],
+                    className="small mb-2"),
+            ], lg=6),
+            dbc.Col([
+                html.P([html.Strong("vs 30-min: "), "More opportunities. "
+                    "30-min has a similar win rate (47.6%) but generates only 63 trades — "
+                    "half as many as 15-min. Total P&L is lower ($90k vs $114k) and "
+                    "the Calmar ratio is 49.8 vs 61.5. Fewer signals means more capital "
+                    "sitting idle between trades."],
+                    className="small mb-2"),
+            ], lg=6),
+        ]),
+        html.Hr(style={"borderColor": "#444"}),
+        html.P([
+            html.Strong("Calmar ratio (Total P&L ÷ Max Drawdown) "),
+            "is the ranking metric — it rewards high returns relative to risk taken. "
+            "15-min scores highest at 61.5, meaning it earns $61.50 for every $1 of "
+            "maximum drawdown experienced. That's the best risk-adjusted return of the three."
+        ], className="small mb-0 text-muted"),
+    ]), color="dark", outline=True)
 
 
 def _build_contract_chart(comparison: pd.DataFrame) -> go.Figure:
