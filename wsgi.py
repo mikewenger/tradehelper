@@ -35,6 +35,8 @@ prefetch_options(_collect_signals(df))
 
 print("Running primary backtest...")
 trade_log = run_backtest(df)
+trade_log = trade_log[trade_log["pricing"] == "Real"].copy().reset_index(drop=True)
+trade_log["cumulative_pnl"] = trade_log["pnl"].cumsum()
 
 print("Building contract comparison table...")
 comparison = build_contract_comparison(df)

@@ -17,7 +17,7 @@ MARKET_OPEN = "09:30"
 MARKET_CLOSE = "16:00"
 FORCE_CLOSE = "15:55"
 
-TAKE_PROFIT = 300.0   # close trade when P&L reaches +$300  [optimizer #1 by Calmar]
-STOP_LOSS   = -150.0  # close trade when P&L reaches -$150  [optimizer #1 by Calmar]
+TAKE_PROFIT = 1500.0  # close trade when P&L reaches +$1500  [optimizer #2 by Calmar, real prices]
+STOP_LOSS   = -500.0  # close trade when P&L reaches -$500   [optimizer #2 by Calmar, real prices]
 
 BACKTEST_START = "2026-01-01"  # only trade signals on/after this date (EMA still uses full history)

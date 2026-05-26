@@ -149,7 +149,7 @@ def fetch_option_bars(option_ticker: str, date_str: str,
 
 
 def prefetch_options(signals: list[dict], delay: float = 2.0,
-                     max_workers: int = 1) -> None:
+                     max_workers: int = 1, underlying: str = "QQQ") -> None:
     """
     Pre-fetch option bars for all crossover signals before the backtest.
     Contracts already in the disk cache are skipped.
@@ -160,7 +160,7 @@ def prefetch_options(signals: list[dict], delay: float = 2.0,
 
     to_fetch = []
     for sig in signals:
-        tk = build_option_ticker("QQQ", sig["date"], sig["option_type"], sig["strike"])
+        tk = build_option_ticker(underlying, sig["date"], sig["option_type"], sig["strike"])
         if tk not in _cache:
             to_fetch.append((tk, sig["date"].strftime("%Y-%m-%d")))
 

@@ -7,7 +7,6 @@ import pytz
 
 from config import MASSIVE_API_KEY, MASSIVE_BASE_URL, TICKER
 
-CACHE_FILE = Path(__file__).parent / "QQQ_15min.parquet"
 CACHE_MAX_AGE_HOURS = 24
 EST = pytz.timezone("US/Eastern")
 
@@ -32,18 +31,22 @@ def _fetch_all_pages(url: str) -> list[dict]:
     return results
 
 
-def fetch_qqq_bars() -> pd.DataFrame:
-    if CACHE_FILE.exists():
-        age = datetime.now() - datetime.fromtimestamp(CACHE_FILE.stat().st_mtime)
+def fetch_bars(ticker: str = None) -> pd.DataFrame:
+    """Fetch 6-month 15-min bars for the given ticker (defaults to config TICKER)."""
+    ticker = ticker or TICKER
+    cache_file = Path(__file__).parent / f"{ticker}_15min.parquet"
+
+    if cache_file.exists():
+        age = datetime.now() - datetime.fromtimestamp(cache_file.stat().st_mtime)
         if age < timedelta(hours=CACHE_MAX_AGE_HOURS):
-            print(f"Loading cached data from {CACHE_FILE}")
-            return pd.read_parquet(CACHE_FILE)
+            print(f"Loading cached data from {cache_file}")
+            return pd.read_parquet(cache_file)
 
     to_date = datetime.now(EST).strftime("%Y-%m-%d")
     from_date = (datetime.now(EST) - timedelta(days=183)).strftime("%Y-%m-%d")
 
-    print(f"Fetching {TICKER} 15-min bars from Massive.com ({from_date} to {to_date}, all hours)...")
-    url = _bars_url(TICKER, 15, "minute", from_date, to_date)
+    print(f"Fetching {ticker} 15-min bars from Massive.com ({from_date} to {to_date}, all hours)...")
+    url = _bars_url(ticker, 15, "minute", from_date, to_date)
     raw = _fetch_all_pages(url)
 
     if not raw:
@@ -62,7 +65,12 @@ def fetch_qqq_bars() -> pd.DataFrame:
     is_weekday = df.index.dayofweek < 5
     df = df[is_weekday]
 
-    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(CACHE_FILE)
-    print(f"Fetched {len(df)} bars (all hours, weekdays). Cached to {CACHE_FILE}")
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(cache_file)
+    print(f"Fetched {len(df)} bars (all hours, weekdays). Cached to {cache_file}")
     return df
+
+
+# Backwards-compatible alias
+def fetch_qqq_bars() -> pd.DataFrame:
+    return fetch_bars("QQQ")

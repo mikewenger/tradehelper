@@ -17,11 +17,13 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
         f"{market_bars.min().strftime('%b %d, %Y')} "
         f"– {market_bars.max().strftime('%b %d, %Y')}"
     )
+    # Only show dates where at least one trade fired
+    trade_dates = sorted(trade_log["date"].unique(), reverse=True) if not trade_log.empty else []
     date_options = [
-        {"label": ts.strftime("%Y-%m-%d %H:%M"), "value": ts.strftime("%Y-%m-%d %H:%M")}
-        for ts in market_bars
+        {"label": str(d), "value": str(d)}
+        for d in trade_dates
     ]
-    default_date = market_bars[-1].strftime("%Y-%m-%d %H:%M") if len(market_bars) else None
+    default_date = str(trade_dates[0]) if trade_dates else None
 
     app.layout = dbc.Container([
         dbc.Row(dbc.Col(html.H2("QQQ EMA 8/21 Crossover — 0DTE Options Backtest",
@@ -125,27 +127,15 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
 
                 html.Hr(style={"borderColor": "#444"}),
 
-                # Calls table
-                dbc.Row(dbc.Col([
-                    html.H5("CALLS", className="text-success mb-2 mt-3"),
-                    html.Div(id="calls-table"),
-                ], width=12), className="mb-4"),
+                # Summary cards: total P&L per contract size
+                dbc.Row(id="contract-summary-cards", className="mb-4 mt-2"),
 
-                # Puts table
+                # Full trade-by-trade breakdown with P&L at each contract size
                 dbc.Row(dbc.Col([
-                    html.H5("PUTS", className="text-danger mb-2"),
-                    html.Div(id="puts-table"),
+                    html.H5("Trade-by-Trade P&L by Contract Size",
+                            className="mb-2"),
+                    html.Div(id="contract-trade-table"),
                 ], width=12), className="mb-4"),
-
-                # Combined table
-                dbc.Row(dbc.Col([
-                    html.H5("COMBINED (Calls + Puts)", className="text-info mb-2"),
-                    html.Div(id="combined-table"),
-                ], width=12), className="mb-4"),
-
-                # Bar chart: Total P&L by contract size
-                dbc.Row(dbc.Col(dcc.Graph(id="contract-chart",
-                                          style={"height": "350px"}))),
             ]),
             # ── TAB 3: Timeframe Analysis ──────────────────────────────────────
             dbc.Tab(label="Timeframe Analysis", tab_id="tab-tf", children=(
@@ -167,7 +157,7 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
         Input("date-picker", "value"),
     )
     def update_daily(selected_date):
-        # selected_date is "YYYY-MM-DD HH:MM" — extract just the date part
+        # selected_date is "YYYY-MM-DD"
         selected_day = selected_date[:10] if selected_date else None
         day_trades = pd.DataFrame()
         if not trade_log.empty and selected_day:
@@ -198,23 +188,39 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
         eq_fig = _build_equity(trade_log)
         return summary_cards, fig, table, eq_fig
 
-    # ── Callback: contract comparison tab (static — runs once on load) ─────────
+    # ── Callback: contract comparison tab ──────────────────────────────────────
     @app.callback(
-        Output("calls-table", "children"),
-        Output("puts-table", "children"),
-        Output("combined-table", "children"),
-        Output("contract-chart", "figure"),
+        Output("contract-summary-cards", "children"),
+        Output("contract-trade-table", "children"),
         Input("tabs", "active_tab"),
     )
     def update_comparison(_):
-        calls_tbl = _build_comparison_table(comparison[comparison["direction"] == "CALL"],
-                                             "#26a69a")
-        puts_tbl = _build_comparison_table(comparison[comparison["direction"] == "PUT"],
-                                            "#ef5350")
-        comb_tbl = _build_comparison_table(comparison[comparison["direction"] == "COMBINED"],
-                                            "#42a5f5")
-        chart = _build_contract_chart(comparison)
-        return calls_tbl, puts_tbl, comb_tbl, chart
+        from backtest.engine import run_backtest as _run_bt
+        sizes = [10, 20, 30, 40, 50]
+
+        # Re-run backtest for each contract size so TP/SL fire at correct price moves
+        logs = {}
+        for n in sizes:
+            log = _run_bt(df, contracts=n, use_real_prices=True)
+            log = log[log["pricing"] == "Real"].copy().reset_index(drop=True)
+            log["cumulative_pnl"] = log["pnl"].cumsum()
+            logs[n] = log
+
+        # Summary cards: total P&L per contract size
+        summary_cards = []
+        for n in sizes:
+            total = logs[n]["pnl"].sum() if not logs[n].empty else 0
+            color = "success" if total >= 0 else "danger"
+            summary_cards.append(
+                dbc.Col(dbc.Card(dbc.CardBody([
+                    html.P(f"{n} Contracts", className="text-muted small mb-1"),
+                    html.H5(f"${total:,.0f}",
+                            className=f"fw-bold text-{'success' if total >= 0 else 'danger'} mb-0"),
+                ]), color=color, outline=True), width="auto", className="mb-2")
+            )
+
+        trade_tbl = _build_contract_trade_table(logs, sizes)
+        return summary_cards, trade_tbl
 
     return app
 
@@ -259,14 +265,15 @@ def _build_chart(df: pd.DataFrame, day_trades: pd.DataFrame,
     fig.add_trace(go.Scatter(x=x_vals, y=day_df["ema21"], name="EMA 21",
                               line=dict(color="#42a5f5", width=1.5)), row=1, col=1)
 
-    exit_colors = {"TP": "#00e676", "SL": "#ff1744", "Cross": "#ffffff",
+    exit_colors = {"TP": "#00e676", "SL": "#ff1744",
+                   "LowerHigh": "#ffffff", "HigherLow": "#ffffff",
                    "Force": "#ffab40", "EOD": "#ce93d8"}
 
     if not day_trades.empty:
         for _, trade in day_trades.iterrows():
             color = "#26a69a" if trade["direction"] == "CALL" else "#ef5350"
             symbol_entry = "triangle-up" if trade["direction"] == "CALL" else "triangle-down"
-            exit_color = exit_colors.get(trade.get("exit_reason", "Cross"), "#ffffff")
+            exit_color = exit_colors.get(trade.get("exit_reason", ""), "#ffffff")
             pnl_str = f"${trade['pnl']:,.2f}" if isinstance(trade["pnl"], (int, float)) else trade["pnl"]
             entry_x = trade["entry_time"].strftime("%Y-%m-%d %H:%M")
             exit_x  = trade["exit_time"].strftime("%Y-%m-%d %H:%M")
@@ -372,12 +379,87 @@ def _build_equity(trade_log: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def _build_contract_trade_table(logs: dict, sizes: list) -> html.Div:
+    """
+    One row per trade day. Each contract-size column shows the actual daily P&L
+    from a properly re-run backtest at that size (so TP/SL fire at the right price moves).
+    """
+    if not logs or all(v.empty for v in logs.values()):
+        return html.P("No trades.", className="text-muted")
+
+    # Collect all trade dates across all contract sizes
+    all_dates = sorted(set(
+        str(d) for n, log in logs.items() for d in log["date"].unique()
+    ))
+
+    rows = []
+    for date_str in all_dates:
+        row = {"date": date_str}
+        for n in sizes:
+            log = logs[n]
+            day = log[log["date"].astype(str) == date_str]
+            row[f"trades_{n}"] = len(day)
+            row[f"pnl_{n}c"]   = round(day["pnl"].sum(), 0) if not day.empty else 0
+        rows.append(row)
+
+    daily = pd.DataFrame(rows)
+
+    # Totals row
+    totals = {"date": "TOTAL"}
+    for n in sizes:
+        totals[f"trades_{n}"] = daily[f"trades_{n}"].sum()
+        totals[f"pnl_{n}c"]   = round(daily[f"pnl_{n}c"].sum(), 0)
+    daily = pd.concat([daily, pd.DataFrame([totals])], ignore_index=True)
+
+    # Format P&L as currency
+    for n in sizes:
+        daily[f"pnl_{n}c"] = daily[f"pnl_{n}c"].apply(
+            lambda x: f"${int(x):,}" if isinstance(x, (int, float)) else x)
+
+    # Use trades column from 20-contract run as the reference trade count
+    daily["trades"] = daily["trades_20"]
+    for n in sizes:
+        daily = daily.drop(columns=[f"trades_{n}"])
+
+    columns = (
+        [{"name": h, "id": i} for h, i in [("Date", "date"), ("# Trades", "trades")]] +
+        [{"name": f"{n} Contracts", "id": f"pnl_{n}c"} for n in sizes]
+    )
+
+    pnl_styles = []
+    for n in sizes:
+        col = f"pnl_{n}c"
+        pnl_styles += [
+            {"if": {"filter_query": f'{{{col}}} contains "-"', "column_id": col},
+             "color": "#ef5350"},
+            {"if": {"filter_query": f'{{{col}}} contains "$" && !({{{col}}} contains "-")',
+                    "column_id": col}, "color": "#26a69a"},
+        ]
+
+    return dash_table.DataTable(
+        data=daily.to_dict("records"),
+        columns=columns,
+        style_table={"overflowX": "auto"},
+        style_header={"backgroundColor": "#303030", "color": "white",
+                      "fontWeight": "bold", "textAlign": "center"},
+        style_cell={"backgroundColor": "#1a1a1a", "color": "white",
+                    "textAlign": "center", "padding": "8px 12px",
+                    "fontSize": "14px"},
+        style_data_conditional=pnl_styles + [
+            {"if": {"filter_query": '{date} = "TOTAL"'},
+             "fontWeight": "bold", "backgroundColor": "#2a2a2a", "fontSize": "15px"},
+        ],
+        page_size=120,
+        sort_action="native",
+    )
+
+
 def _build_comparison_table(subset: pd.DataFrame, pnl_color: str) -> html.Div:
     if subset.empty:
         return html.P("No data.", className="text-muted")
 
     cols_needed = ["contracts", "trades", "win_rate",
-                   "tp_hits", "sl_hits", "cross_exits", "force_exits",
+                   "tp_hits", "sl_hits", "trend_exits", "force_exits",
                    "total_pnl", "avg_pnl", "best_trade", "worst_trade"]
     cols_needed = [c for c in cols_needed if c in subset.columns]
     display = subset[cols_needed].copy()
@@ -395,7 +477,7 @@ def _build_comparison_table(subset: pd.DataFrame, pnl_color: str) -> html.Div:
         "win_rate":    "Win Rate",
         "tp_hits":     f"Take Profit Hits (+${TAKE_PROFIT:,.0f})",
         "sl_hits":     f"Stop Loss Hits (-${abs(STOP_LOSS):,.0f})",
-        "cross_exits": "Cross Exits",
+        "trend_exits": "Trend Reversal Exits",
         "force_exits": "Force / EOD",
         "total_pnl":   "Total P&L",
         "avg_pnl":     "Avg P&L / Trade",
@@ -538,7 +620,7 @@ def _build_tf_comparison_table(tf_data: dict, colors: dict, winner: int) -> html
         ("Calmar Ratio",     "calmar",       lambda v: f"{v:.3f}"),
         ("TP Hits",          "tp_hits",      lambda v: str(v)),
         ("SL Hits",          "sl_hits",      lambda v: str(v)),
-        ("Cross Exits",      "cross_exits",  lambda v: str(v)),
+        ("Trend Exits",      "trend_exits",  lambda v: str(v)),
         ("Force / EOD",      "force_exits",  lambda v: str(v)),
     ]
     tfs = [tf for tf in [5, 15, 30] if tf in tf_data]
@@ -645,9 +727,9 @@ def _build_tf_exit_chart(tf_data: dict, colors: dict) -> go.Figure:
     lbls = [f"{tf}-min" for tf in tfs]
     fig  = go.Figure()
     for reason, color in [("tp_hits", "#26a69a"), ("sl_hits", "#ef5350"),
-                           ("cross_exits", "#ffb74d"), ("force_exits", "#9e9e9e")]:
+                           ("trend_exits", "#ffb74d"), ("force_exits", "#9e9e9e")]:
         name = {"tp_hits": "TP Hit", "sl_hits": "SL Hit",
-                "cross_exits": "Cross Exit", "force_exits": "Force/EOD"}[reason]
+                "trend_exits": "Trend Reversal", "force_exits": "Force/EOD"}[reason]
         fig.add_trace(go.Bar(
             name=name, x=lbls,
             y=[tf_data[tf][reason] for tf in tfs],

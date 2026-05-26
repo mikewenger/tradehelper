@@ -46,10 +46,11 @@ def _get_with_retry(url: str, headers: dict, params: dict | None,
     raise RuntimeError(f"Failed after {max_retries} retries: {url}")
 
 
-def fetch_bars(multiplier: int) -> pd.DataFrame:
+def fetch_bars(multiplier: int, ticker: str = None) -> pd.DataFrame:
+    ticker = ticker or TICKER
     # Try to reuse the main-app 15-min cache (same data, different filename)
-    main_cache = Path("data/QQQ_15min.parquet")
-    cache = Path(f"data/QQQ_{multiplier}min_tf.parquet")
+    main_cache = Path(f"data/{ticker}_15min.parquet")
+    cache = Path(f"data/{ticker}_{multiplier}min_tf.parquet")
 
     # For 15-min specifically, prefer the main app cache if it's fresh
     if multiplier == 15 and main_cache.exists():
@@ -67,8 +68,8 @@ def fetch_bars(multiplier: int) -> pd.DataFrame:
     to_date   = datetime.now(EST).strftime("%Y-%m-%d")
     from_date = (datetime.now(EST) - timedelta(days=183)).strftime("%Y-%m-%d")
 
-    print(f"  Fetching {multiplier}-min bars ({from_date} to {to_date})...")
-    url    = (f"{MASSIVE_BASE_URL}/v2/aggs/ticker/{TICKER}"
+    print(f"  Fetching {ticker} {multiplier}-min bars ({from_date} to {to_date})...")
+    url    = (f"{MASSIVE_BASE_URL}/v2/aggs/ticker/{ticker}"
               f"/range/{multiplier}/minute/{from_date}/{to_date}")
     headers = {"Authorization": f"Bearer {MASSIVE_API_KEY}"}
     params  = {"adjusted": "true", "sort": "asc", "limit": 50000}

@@ -33,14 +33,13 @@ def _collect_signals(df: pd.DataFrame) -> list[dict]:
 
 def build_timeframe_comparison(df_15: pd.DataFrame) -> dict:
     """
-    Run Black-Scholes backtests for 5, 15, and 30-minute bars.
-    Black-Scholes used for all three so the comparison is apples-to-apples.
+    Run real-price backtests for 5, 15, and 30-minute bars.
+    Prefetches real Massive.com option prices for each timeframe's signals,
+    then filters to Real-priced trades only — no Black-Scholes anywhere.
     Returns {tf_minutes: {log, trades, win_rate, total_pnl, …}}
     """
     from optimize_timeframe import fetch_bars as _fetch_bars
     from optimize_timeframe import add_emas as _add_emas_tf
-    import pytz
-    EST = pytz.timezone("US/Eastern")
 
     results = {}
     for tf in TF_COMPARE_MINS:
@@ -56,7 +55,13 @@ def build_timeframe_comparison(df_15: pd.DataFrame) -> dict:
                 if BACKTEST_START:
                     df = df[df.index >= pd.Timestamp(BACKTEST_START, tz=df.index.tz)]
 
-            log = run_backtest(df, use_real_prices=False)  # BS — fair comparison
+            # Prefetch real prices for this timeframe's signals (cached after first run)
+            tf_signals = _collect_signals(df)
+            print(f"  [{tf}-min] Prefetching real prices for {len(tf_signals)} signals...")
+            prefetch_options(tf_signals)
+
+            log = run_backtest(df, use_real_prices=True)
+            log = log[log["pricing"] == "Real"].copy().reset_index(drop=True)
             if log.empty:
                 continue
             log["cumulative_pnl"] = log["pnl"].cumsum()
@@ -77,7 +82,7 @@ def build_timeframe_comparison(df_15: pd.DataFrame) -> dict:
                 "calmar":       calmar,
                 "tp_hits":      int((reasons == "TP").sum()),
                 "sl_hits":      int((reasons == "SL").sum()),
-                "cross_exits":  int((reasons == "Cross").sum()),
+                "trend_exits":  int(reasons.isin(["LowerHigh", "HigherLow"]).sum()),
                 "force_exits":  int(reasons.isin(["Force", "EOD"]).sum()),
             }
         except Exception as e:
@@ -90,6 +95,7 @@ def build_contract_comparison(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for n in CONTRACT_SIZES:
         log = run_backtest(df, contracts=n)
+        log = log[log["pricing"] == "Real"].copy()  # real-priced trades only
         for direction in ["CALL", "PUT", "COMBINED"]:
             if direction == "COMBINED":
                 subset = log
@@ -100,7 +106,7 @@ def build_contract_comparison(df: pd.DataFrame) -> pd.DataFrame:
                 rows.append({
                     "contracts": n, "direction": direction,
                     "trades": 0, "win_rate": 0.0,
-                    "tp_hits": 0, "sl_hits": 0, "cross_exits": 0, "force_exits": 0,
+                    "tp_hits": 0, "sl_hits": 0, "trend_exits": 0, "force_exits": 0,
                     "total_pnl": 0.0, "avg_pnl": 0.0,
                     "best_trade": 0.0, "worst_trade": 0.0,
                 })
@@ -114,7 +120,7 @@ def build_contract_comparison(df: pd.DataFrame) -> pd.DataFrame:
                     "win_rate":     round((pnl > 0).mean() * 100, 1),
                     "tp_hits":      int((reasons == "TP").sum()),
                     "sl_hits":      int((reasons == "SL").sum()),
-                    "cross_exits":  int((reasons == "Cross").sum()),
+                    "trend_exits":  int(reasons.isin(["LowerHigh", "HigherLow"]).sum()),
                     "force_exits":  int(reasons.isin(["Force", "EOD"]).sum()),
                     "total_pnl":    round(pnl.sum(), 2),
                     "avg_pnl":      round(pnl.mean(), 2),
@@ -143,10 +149,13 @@ def main():
 
     print("Running primary backtest...")
     trade_log = run_backtest(df)
+    # Drop any trade where real prices weren't available for both entry and exit
+    trade_log = trade_log[trade_log["pricing"] == "Real"].copy().reset_index(drop=True)
+    trade_log["cumulative_pnl"] = trade_log["pnl"].cumsum()
     total = len(trade_log)
     if total:
         wins = len(trade_log[trade_log["pnl"] > 0])
-        print(f"Backtest complete: {total} trades | "
+        print(f"Backtest complete: {total} real-priced trades | "
               f"Win rate: {wins/total*100:.1f}% | "
               f"Total P&L: ${trade_log['pnl'].sum():,.2f}")
     else:

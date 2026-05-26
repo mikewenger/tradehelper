@@ -14,6 +14,7 @@ from strategy.indicators import add_emas
 from strategy.signals import add_signals
 from backtest.engine import run_backtest
 import config
+from config import BACKTEST_START
 
 # ── grid ──────────────────────────────────────────────────────────────────────
 TP_VALUES  = [200, 300, 500, 750, 1000, 1500, 2000, 3000]   # take-profit $
@@ -62,10 +63,14 @@ def main():
     df = fetch_qqq_bars()
     df = add_emas(df)
     df = add_signals(df)
+    df = df[df["in_market_hours"]]
+    if BACKTEST_START:
+        df = df[df.index >= pd.Timestamp(BACKTEST_START, tz=df.index.tz)]
+        print(f"Backtest range: {df.index[0].date()} to {df.index[-1].date()}")
 
     results = []
     combos = list(itertools.product(TP_VALUES, SL_VALUES))
-    print(f"Testing {len(combos)} TP/SL combinations...\n")
+    print(f"Testing {len(combos)} TP/SL combinations (real prices, Real-only trades)...\n")
 
     for tp, sl in combos:
         # temporarily override config values in-process
@@ -77,7 +82,8 @@ def main():
         import backtest.engine as eng
         importlib.reload(eng)
 
-        trade_log = eng.run_backtest(df)
+        trade_log = eng.run_backtest(df, use_real_prices=True)
+        trade_log = trade_log[trade_log["pricing"] == "Real"].copy()
         m = metrics(trade_log)
         if m:
             results.append({"tp": tp, "sl": sl, **m})
@@ -105,8 +111,8 @@ def main():
     print("=" * 100)
 
     best = results_df.iloc[0]
-    print(f"\nBEST:  TP=${best['tp']:,.0f}  SL=${best['sl']:,.0f}  "
-          f"→  {best['trades']} trades | {best['win_pct']}% wins | "
+    print(f"\nBEST:  TP=${best['tp']:,.0f}  SL=${best['sl']:,.0f}  ->  "
+          f"{best['trades']} trades | {best['win_pct']}% wins | "
           f"${best['total_pnl']:,.2f} P&L | Calmar {best['calmar']:.3f}\n")
 
     # ── write winner to config.py ─────────────────────────────────────────────
