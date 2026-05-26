@@ -146,17 +146,7 @@ def main():
     print("Building timeframe comparison (5 / 15 / 30-min)...")
     tf_data = build_timeframe_comparison(df)
 
-    app = create_app(df, trade_log, comparison, tf_data)
-
-    # Patch title to show SPY
-    for component in app.layout.children:
-        try:
-            for child in component.children:
-                if hasattr(child, 'children') and isinstance(child.children, str):
-                    if 'QQQ' in child.children:
-                        child.children = child.children.replace('QQQ', TICKER)
-        except Exception:
-            pass
+    app = create_app(df, trade_log, comparison, tf_data, ticker=TICKER)
 
     print(f"\n{TICKER} Dashboard running at http://localhost:{PORT}")
     app.run(debug=False, host="0.0.0.0", port=PORT)

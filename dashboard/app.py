@@ -9,7 +9,8 @@ from config import TAKE_PROFIT, STOP_LOSS, MARKET_OPEN, MARKET_CLOSE, FORCE_CLOS
 
 def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
                comparison: pd.DataFrame,
-               tf_data: dict | None = None) -> dash.Dash:
+               tf_data: dict | None = None,
+               ticker: str = "QQQ") -> dash.Dash:
     app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
 
     market_bars = df[df["in_market_hours"]].index
@@ -26,7 +27,7 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
     default_date = str(trade_dates[0]) if trade_dates else None
 
     app.layout = dbc.Container([
-        dbc.Row(dbc.Col(html.H2("QQQ EMA 8/21 Crossover — 0DTE Options Backtest",
+        dbc.Row(dbc.Col(html.H2(f"{ticker} EMA 8/21 Crossover — 0DTE Options Backtest",
                                 className="text-center my-3"))),
 
         dbc.Tabs([
@@ -69,7 +70,7 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
                 dbc.Row([
                     dbc.Col(dbc.Card(dbc.CardBody([
                         html.H6("INSTRUMENT", className="text-muted mb-2 small"),
-                        html.P("QQQ  •  0DTE Options  •  1 Strike OTM",
+                        html.P(f"{ticker}  •  0DTE Options  •  1 Strike OTM",
                                className="fw-bold mb-0"),
                     ]), color="dark", outline=True), width=12, lg=4, className="mb-3"),
 
@@ -183,7 +184,7 @@ def create_app(df: pd.DataFrame, trade_log: pd.DataFrame,
             _card("Worst Day", worst_day, color="danger"),
         ]
 
-        fig = _build_chart(df, day_trades, selected_day, selected_date)
+        fig = _build_chart(df, day_trades, selected_day, selected_date, ticker=ticker)
         table = _build_trade_table(day_trades)
         eq_fig = _build_equity(trade_log)
         return summary_cards, fig, table, eq_fig
@@ -237,7 +238,8 @@ def _card(title, value, color="secondary"):
 
 
 def _build_chart(df: pd.DataFrame, day_trades: pd.DataFrame,
-                 selected_date: str, selected_datetime: str = None) -> go.Figure:
+                 selected_date: str, selected_datetime: str = None,
+                 ticker: str = "QQQ") -> go.Figure:
     import pytz
     EST = pytz.timezone("US/Eastern")
 
@@ -256,7 +258,7 @@ def _build_chart(df: pd.DataFrame, day_trades: pd.DataFrame,
 
     fig.add_trace(go.Candlestick(
         x=x_vals, open=day_df["open"], high=day_df["high"],
-        low=day_df["low"], close=day_df["close"], name="QQQ",
+        low=day_df["low"], close=day_df["close"], name=ticker,
         increasing_line_color="#26a69a", decreasing_line_color="#ef5350"
     ), row=1, col=1)
 
@@ -321,7 +323,7 @@ def _build_chart(df: pd.DataFrame, day_trades: pd.DataFrame,
                       line=dict(color="#ffd600", width=2, dash="dash"))
 
     fig.update_layout(
-        title=dict(text=f"QQQ  ·  {selected_datetime or selected_date}",
+        title=dict(text=f"{ticker}  ·  {selected_datetime or selected_date}",
                    font=dict(size=13, color="#aaa")),
         template="plotly_dark",
         xaxis_rangeslider_visible=False,
