@@ -340,7 +340,7 @@ def _build_trade_table(day_trades: pd.DataFrame) -> html.Div:
         return html.P("No trades on this day.", className="text-muted")
 
     cols = ["direction", "strike", "entry_time", "entry_price",
-            "exit_time", "exit_price", "exit_reason", "contracts", "pnl", "pricing"]
+            "exit_time", "exit_price", "exit_reason", "contracts", "pnl"]
     cols = [c for c in cols if c in day_trades.columns]
     display = day_trades[cols].copy()
     display["entry_time"] = display["entry_time"].dt.strftime("%Y-%m-%d %H:%M")
@@ -354,12 +354,8 @@ def _build_trade_table(day_trades: pd.DataFrame) -> html.Div:
         style_header={"backgroundColor": "#303030", "color": "white", "fontWeight": "bold"},
         style_cell={"backgroundColor": "#1a1a1a", "color": "white", "textAlign": "center"},
         style_data_conditional=[
-            # P&L colors
             {"if": {"filter_query": '{pnl} contains "-"'}, "color": "#ef5350"},
             {"if": {"filter_query": '{pnl} contains "$" && !({pnl} contains "-")'}, "color": "#26a69a"},
-            # Pricing source: BS rows get an amber background, Mixed gets orange
-            {"if": {"filter_query": '{pricing} = "BS"'},    "backgroundColor": "#3a2800", "color": "#ffb74d"},
-            {"if": {"filter_query": '{pricing} = "Mixed"'}, "backgroundColor": "#3a1e00", "color": "#ff9800"},
         ],
     )
 
@@ -557,7 +553,7 @@ def _build_tf_tab(tf_data: dict) -> list:
                                  className="text-center mt-4 mb-0"))),
         dbc.Row(dbc.Col(html.P(
             f"TP: +${TAKE_PROFIT:,.0f}  |  SL: -${abs(STOP_LOSS):,.0f}  |  "
-            "Black-Scholes pricing (equal basis for all timeframes)",
+            "Real market prices only",
             className="text-center text-muted small mb-0"
         ))),
         dbc.Row(dbc.Col(winner_card)),
